@@ -1,80 +1,439 @@
-#!/usr/bin/env python
-# coding: utf-8
+import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.express as px
+import plotly.graph_objects as go
+from datetime import datetime
+import json
 
-# In[1]:
+# Page configuration
+st.set_page_config(
+    page_title="Water Portability Assessment",
+    page_icon="💧",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
+# Custom CSS
+st.markdown("""
+<style>
+    .main-header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        padding: 2rem;
+        border-radius: 10px;
+        margin-bottom: 2rem;
+        color: white;
+        text-align: center;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+    
+    .metric-card {
+        background: white;
+        padding: 1.5rem;
+        border-radius: 10px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        border-left: 4px solid #667eea;
+        margin-bottom: 1rem;
+    }
+    
+    .status-safe {
+        color: #28a745;
+        font-weight: bold;
+        font-size: 1.2em;
+    }
+    
+    .status-caution {
+        color: #ffc107;
+        font-weight: bold;
+        font-size: 1.2em;
+    }
+    
+    .status-unsafe {
+        color: #dc3545;
+        font-weight: bold;
+        font-size: 1.2em;
+    }
+    
+    .parameter-input {
+        background-color: #f8f9fa;
+        border: 2px solid #e9ecef;
+        border-radius: 5px;
+        padding: 0.5rem;
+    }
+    
+    .sidebar .sidebar-content {
+        background: linear-gradient(180deg, #f8f9fa 0%, #e9ecef 100%);
+    }
+</style>
+""", unsafe_allow_html=True)
 
-from flask import Flask, render_template, request
-import joblib
-from datetime import date
+# Water Quality Standards (WHO/EPA guidelines)
+WATER_STANDARDS = {
+    'ph': {'min': 6.5, 'max': 8.5, 'unit': 'pH'},
+    'turbidity': {'max': 1, 'unit': 'NTU'},
+    'tds': {'max': 500, 'unit': 'mg/L'},
+    'hardness': {'max': 300, 'unit': 'mg/L as CaCO3'},
+    'chlorine': {'max': 4, 'unit': 'mg/L'},
+    'fluoride': {'max': 1.5, 'unit': 'mg/L'},
+    'nitrate': {'max': 50, 'unit': 'mg/L'},
+    'sulfate': {'max': 250, 'unit': 'mg/L'},
+    'iron': {'max': 0.3, 'unit': 'mg/L'},
+    'manganese': {'max': 0.1, 'unit': 'mg/L'},
+    'copper': {'max': 2, 'unit': 'mg/L'},
+    'zinc': {'max': 3, 'unit': 'mg/L'}
+}
 
+def initialize_session_state():
+    """Initialize session state variables"""
+    if 'water_tests' not in st.session_state:
+        st.session_state.water_tests = []
+    if 'current_test' not in st.session_state:
+        st.session_state.current_test = {}
 
-# In[2]:
+def assess_water_quality(parameters):
+    """Assess water quality based on parameters"""
+    violations = []
+    warnings = []
+    score = 100
+    
+    for param, value in parameters.items():
+        if param in WATER_STANDARDS:
+            standard = WATER_STANDARDS[param]
+            
+            if param == 'ph':
+                if value < standard['min'] or value > standard['max']:
+                    violations.append(f"pH ({value}) outside safe range ({standard['min']}-{standard['max']})")
+                    score -= 15
+                elif value < 6.8 or value > 8.2:
+                    warnings.append(f"pH ({value}) approaching limits")
+                    score -= 5
+            else:
+                if 'max' in standard and value > standard['max']:
+                    violations.append(f"{param.title()} ({value} {standard['unit']}) exceeds limit ({standard['max']} {standard['unit']})")
+                    score -= 10
+                elif 'max' in standard and value > standard['max'] * 0.8:
+                    warnings.append(f"{param.title()} ({value} {standard['unit']}) approaching limit")
+                    score -= 3
+    
+    # Determine overall status
+    if score >= 90:
+        status = "Safe"
+        color = "green"
+    elif score >= 70:
+        status = "Caution"
+        color = "orange"
+    else:
+        status = "Unsafe"
+        color = "red"
+    
+    return {
+        'score': max(0, score),
+        'status': status,
+        'color': color,
+        'violations': violations,
+        'warnings': warnings
+    }
 
+def create_radar_chart(parameters):
+    """Create radar chart for water quality parameters"""
+    categories = []
+    values = []
+    max_values = []
+    
+    for param, value in parameters.items():
+        if param in WATER_STANDARDS:
+            categories.append(param.title())
+            
+            if param == 'ph':
+                # Normalize pH to 0-100 scale
+                optimal_ph = 7.0
+                ph_range = 1.5
+                normalized_value = max(0, 100 - abs(value - optimal_ph) * 100 / ph_range)
+            else:
+                standard = WATER_STANDARDS[param]
+                if 'max' in standard:
+                    normalized_value = min(100, (1 - value / standard['max']) * 100)
+                else:
+                    normalized_value = 100
+            
+            values.append(max(0, normalized_value))
+            max_values.append(100)
+    
+    fig = go.Figure()
+    
+    fig.add_trace(go.Scatterpolar(
+        r=values,
+        theta=categories,
+        fill='toself',
+        name='Current Values',
+        line_color='rgba(102, 126, 234, 0.8)',
+        fillcolor='rgba(102, 126, 234, 0.3)'
+    ))
+    
+    fig.add_trace(go.Scatterpolar(
+        r=max_values,
+        theta=categories,
+        fill='toself',
+        name='Safe Limits',
+        line_color='rgba(40, 167, 69, 0.8)',
+        fillcolor='rgba(40, 167, 69, 0.1)'
+    ))
+    
+    fig.update_layout(
+        polar=dict(
+            radialaxis=dict(
+                visible=True,
+                range=[0, 100]
+            )),
+        showlegend=True,
+        title="Water Quality Assessment Radar",
+        height=500
+    )
+    
+    return fig
 
-model = joblib.load('model.pkl')
-model
-
-
-# In[3]:
-
-
-app = Flask(__name__)
-
-
-# In[4]:
-
-
-year = date.today().year
-year
-
-
-# In[5]:
-
-
-@app.route("/")
-def home():
-    return render_template('home.html',current_year=year)
-
-
-# In[6]:
-
-
-@app.route("/predict", methods=["GET","POST"])
-def predict():
-    if request.method == "POST":
-        ph = request.form['ph'] #Range: (0.00,14.00)
-        hardness = request.form['hardness'] #Range: (117.12,276.39)
-        solids = request.form['solids'] #Range: (320.94,44831.86)
-        chloramines = request.form['chloramines'] #Range: (3.14,11.09)
-        sulfate = request.form['sulfate'] #Range: (267.15,400.32)
-        conductivity = request.form['conductivity'] #Range: (191.64,655.87)
-        organic_carbon = request.form['organic_carbon'] #Range: (5.32,23.29)
-        trihalomethanes = request.form['trihalomethanes'] #Range: (26.61,106.69)
-        turbidity = request.form['turbidity'] #Range: (1.84,6.09)
+def main():
+    initialize_session_state()
+    
+    # Header
+    st.markdown("""
+    <div class="main-header">
+        <h1>💧 Water Portability Assessment System</h1>
+        <p>Comprehensive water quality analysis and safety evaluation</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Sidebar for input
+    with st.sidebar:
+        st.header("🔬 Water Test Parameters")
         
-        predictions = model.predict([[
-            ph,
-            hardness,
-            solids,
-            chloramines,
-            sulfate,
-            conductivity,
-            organic_carbon,
-            trihalomethanes,
-            turbidity
-        ]])
+        with st.form("water_test_form"):
+            st.subheader("Sample Information")
+            sample_name = st.text_input("Sample Name", value=f"Sample_{len(st.session_state.water_tests)+1}")
+            location = st.text_input("Location", placeholder="e.g., Kitchen Tap, Well #1")
+            test_date = st.date_input("Test Date", value=datetime.now().date())
+            
+            st.subheader("Physical Parameters")
+            ph = st.number_input("pH Level", min_value=0.0, max_value=14.0, value=7.0, step=0.1)
+            turbidity = st.number_input("Turbidity (NTU)", min_value=0.0, value=0.5, step=0.1)
+            tds = st.number_input("Total Dissolved Solids (mg/L)", min_value=0, value=200, step=10)
+            hardness = st.number_input("Hardness (mg/L as CaCO3)", min_value=0, value=150, step=10)
+            
+            st.subheader("Chemical Parameters")
+            chlorine = st.number_input("Free Chlorine (mg/L)", min_value=0.0, value=0.5, step=0.1)
+            fluoride = st.number_input("Fluoride (mg/L)", min_value=0.0, value=0.7, step=0.1)
+            nitrate = st.number_input("Nitrate (mg/L)", min_value=0.0, value=5.0, step=1.0)
+            sulfate = st.number_input("Sulfate (mg/L)", min_value=0.0, value=50.0, step=10.0)
+            
+            st.subheader("Heavy Metals")
+            iron = st.number_input("Iron (mg/L)", min_value=0.0, value=0.1, step=0.01, format="%.3f")
+            manganese = st.number_input("Manganese (mg/L)", min_value=0.0, value=0.02, step=0.01, format="%.3f")
+            copper = st.number_input("Copper (mg/L)", min_value=0.0, value=0.1, step=0.01, format="%.3f")
+            zinc = st.number_input("Zinc (mg/L)", min_value=0.0, value=0.5, step=0.1)
+            
+            submitted = st.form_submit_button("🧪 Analyze Water Sample", use_container_width=True)
+            
+            if submitted:
+                parameters = {
+                    'ph': ph, 'turbidity': turbidity, 'tds': tds, 'hardness': hardness,
+                    'chlorine': chlorine, 'fluoride': fluoride, 'nitrate': nitrate, 'sulfate': sulfate,
+                    'iron': iron, 'manganese': manganese, 'copper': copper, 'zinc': zinc
+                }
+                
+                assessment = assess_water_quality(parameters)
+                
+                test_result = {
+                    'sample_name': sample_name,
+                    'location': location,
+                    'test_date': test_date.strftime('%Y-%m-%d'),
+                    'parameters': parameters,
+                    'assessment': assessment,
+                    'timestamp': datetime.now().isoformat()
+                }
+                
+                st.session_state.water_tests.append(test_result)
+                st.session_state.current_test = test_result
+                st.success("✅ Water sample analyzed successfully!")
+    
+    # Main content area
+    if st.session_state.current_test:
+        test = st.session_state.current_test
+        assessment = test['assessment']
         
-        output = int(predictions[0])
+        # Results header
+        col1, col2, col3, col4 = st.columns(4)
         
-        if output == 1:
-            return render_template('home.html',current_year=year,prediction_text="The water with given details is pure and potable enough to drink and meets the federal standards for domestic consumption.")
+        with col1:
+            st.metric("Overall Score", f"{assessment['score']:.1f}/100")
+        
+        with col2:
+            status_class = f"status-{assessment['color']}" if assessment['color'] != 'orange' else "status-caution"
+            st.markdown(f"<div class='{status_class}'>Status: {assessment['status']}</div>", unsafe_allow_html=True)
+        
+        with col3:
+            st.metric("Sample", test['sample_name'])
+        
+        with col4:
+            st.metric("Test Date", test['test_date'])
+        
+        st.markdown("---")
+        
+        # Main dashboard
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            # Radar chart
+            st.subheader("📊 Water Quality Radar Analysis")
+            radar_fig = create_radar_chart(test['parameters'])
+            st.plotly_chart(radar_fig, use_container_width=True)
+        
+        with col2:
+            # Violations and warnings
+            st.subheader("⚠️ Quality Issues")
+            
+            if assessment['violations']:
+                st.error("**Critical Issues:**")
+                for violation in assessment['violations']:
+                    st.error(f"• {violation}")
+            
+            if assessment['warnings']:
+                st.warning("**Warnings:**")
+                for warning in assessment['warnings']:
+                    st.warning(f"• {warning}")
+            
+            if not assessment['violations'] and not assessment['warnings']:
+                st.success("✅ **No issues detected!**")
+                st.success("Water quality meets all safety standards.")
+        
+        # Detailed parameters table
+        st.subheader("📋 Detailed Parameter Analysis")
+        
+        param_data = []
+        for param, value in test['parameters'].items():
+            if param in WATER_STANDARDS:
+                standard = WATER_STANDARDS[param]
+                
+                if param == 'ph':
+                    limit = f"{standard['min']} - {standard['max']}"
+                    status = "✅ Safe" if standard['min'] <= value <= standard['max'] else "❌ Outside Range"
+                else:
+                    limit = f"≤ {standard['max']}"
+                    status = "✅ Safe" if value <= standard['max'] else "❌ Exceeds Limit"
+                
+                param_data.append({
+                    'Parameter': param.title(),
+                    'Value': f"{value} {standard['unit']}",
+                    'Safe Limit': f"{limit} {standard['unit']}",
+                    'Status': status
+                })
+        
+        df_params = pd.DataFrame(param_data)
+        st.dataframe(df_params, use_container_width=True, hide_index=True)
+        
+        # Recommendations
+        st.subheader("💡 Recommendations")
+        
+        if assessment['status'] == 'Safe':
+            st.success("""
+            **✅ Water is Safe for Consumption**
+            - Regular monitoring recommended
+            - Continue current treatment methods
+            - Test again in 3-6 months
+            """)
+        elif assessment['status'] == 'Caution':
+            st.warning("""
+            **⚠️ Water Requires Attention**
+            - Address highlighted issues promptly
+            - Consider additional treatment methods
+            - Increase testing frequency
+            - Consult water quality expert if needed
+            """)
         else:
-            return render_template('home.html',current_year=year,prediction_text="The water with specified details is impure, contaminated and non-potable. It may not be suitable for domestic consumption.")
-
-
-# In[ ]:
-
+            st.error("""
+            **❌ Water is Not Safe for Consumption**
+            - Do not drink without proper treatment
+            - Address all critical issues immediately
+            - Install appropriate water treatment system
+            - Seek professional water quality assessment
+            """)
+    
+    # Historical data
+    if len(st.session_state.water_tests) > 1:
+        st.markdown("---")
+        st.subheader("📈 Historical Analysis")
+        
+        # Create trends chart
+        df_history = []
+        for i, test in enumerate(st.session_state.water_tests):
+            row = {'Test': i+1, 'Date': test['test_date'], 'Score': test['assessment']['score']}
+            row.update(test['parameters'])
+            df_history.append(row)
+        
+        df_history = pd.DataFrame(df_history)
+        
+        # Score trend
+        fig_trend = px.line(df_history, x='Date', y='Score', 
+                           title='Water Quality Score Trend',
+                           markers=True)
+        fig_trend.update_layout(height=400)
+        st.plotly_chart(fig_trend, use_container_width=True)
+        
+        # Parameter comparison
+        selected_params = st.multiselect(
+            "Select parameters to compare over time:",
+            list(WATER_STANDARDS.keys()),
+            default=['ph', 'tds', 'turbidity']
+        )
+        
+        if selected_params:
+            fig_params = go.Figure()
+            for param in selected_params:
+                fig_params.add_trace(go.Scatter(
+                    x=df_history['Date'],
+                    y=df_history[param],
+                    mode='lines+markers',
+                    name=param.title()
+                ))
+            
+            fig_params.update_layout(
+                title='Parameter Trends Over Time',
+                xaxis_title='Date',
+                yaxis_title='Value',
+                height=400
+            )
+            st.plotly_chart(fig_params, use_container_width=True)
+    
+    # Export functionality
+    if st.session_state.water_tests:
+        st.markdown("---")
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if st.button("📊 Export Current Test", use_container_width=True):
+                if st.session_state.current_test:
+                    test_json = json.dumps(st.session_state.current_test, indent=2, default=str)
+                    st.download_button(
+                        label="Download Test Report (JSON)",
+                        data=test_json,
+                        file_name=f"water_test_{st.session_state.current_test['sample_name']}.json",
+                        mime="application/json"
+                    )
+        
+        with col2:
+            if st.button("📈 Export All Tests", use_container_width=True):
+                all_tests_json = json.dumps(st.session_state.water_tests, indent=2, default=str)
+                st.download_button(
+                    label="Download All Tests (JSON)",
+                    data=all_tests_json,
+                    file_name="all_water_tests.json",
+                    mime="application/json"
+                )
+        
+        with col3:
+            if st.button("🗑️ Clear All Data", use_container_width=True):
+                st.session_state.water_tests = []
+                st.session_state.current_test = {}
+                st.rerun()
 
 if __name__ == "__main__":
-    app.run(port=8080)
+    main()
