@@ -1,0 +1,69 @@
+import streamlit as st
+import pickle
+
+# Load the trained model
+def load_model():
+    try:
+        with open('Water_Quality_Prediction_System.pkl', 'rb') as file:
+            return pickle.load(file)
+    except FileNotFoundError:
+        st.error("❌ Model file not found. Make sure 'Water_Quality_Prediction_System.pkl' is in the same directory.")
+        st.stop()
+    except Exception as e:
+        st.error(f"❌ Error loading model: {e}")
+        st.stop()
+
+model = load_model()
+
+# Define prediction function
+def predict_water_quality(features):
+    prediction = model.predict([features])[0]
+    return 'Safe' if prediction == 0 else 'Unsafe'
+
+# Streamlit App UI
+def main():
+    st.set_page_config(page_title="Water Quality Predictor", layout="wide")
+    st.title("💧 Water Quality Prediction System")
+    st.markdown("Enter the values of chemical parameters of the water sample below:")
+
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+        aluminium = st.number_input("Aluminium", min_value=0.0, max_value=5.0, value=0.5)
+        ammonia = st.number_input("Ammonia", min_value=0.0, max_value=30.0, value=0.5)
+        arsenic = st.number_input("Arsenic", min_value=0.0, max_value=1.0, value=0.5)
+        lead = st.number_input("Lead", min_value=0.0, max_value=1.0, value=0.5)
+        nitrates = st.number_input("Nitrates", min_value=0.0, max_value=50.0, value=0.5)
+
+    with col2:
+        barium = st.number_input("Barium", min_value=0.0, max_value=5.0, value=0.5)
+        cadmium = st.number_input("Cadmium", min_value=0.0, max_value=1.0, value=0.5)
+        chloramine = st.number_input("Chloramine", min_value=0.0, max_value=10.0, value=0.5)
+        nitrites = st.number_input("Nitrites", min_value=0.0, max_value=10.0, value=0.5)
+        perchlorate = st.number_input("Perchlorate", min_value=0.0, max_value=100.0, value=0.5)
+
+    with col3:
+        chromium = st.number_input("Chromium", min_value=0.0, max_value=1.0, value=0.5)
+        copper = st.number_input("Copper", min_value=0.0, max_value=5.0, value=0.5)
+        bacteria = st.number_input("Bacteria", min_value=0.0, max_value=1.0, value=0.5)
+        radium = st.number_input("Radium", min_value=0.0, max_value=10.0, value=0.5)
+        silver = st.number_input("Silver", min_value=0.0, max_value=1.0, value=0.5)
+
+    with col4:
+        viruses = st.number_input("Viruses", min_value=0.0, max_value=1.0, value=0.5)
+        uranium = st.number_input("Uranium", min_value=0.0, max_value=100.0, value=0.5)
+
+    if st.button("Predict Water Quality"):
+        input_features = [
+            aluminium, ammonia, arsenic, barium, cadmium, chloramine, chromium, copper,
+            bacteria, viruses, lead, nitrates, nitrites, perchlorate, radium, silver, uranium
+        ]
+
+        try:
+            result = predict_water_quality(input_features)
+            st.success(f"✅ The predicted water quality is: **{result}**")
+        except Exception as e:
+            st.error(f"Prediction failed: {e}")
+
+if __name__ == "__main__":
+    main()
